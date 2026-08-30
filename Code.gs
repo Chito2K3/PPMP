@@ -18,6 +18,7 @@ var SHEET_EVALUATOR_2 = "Evaluator 2";
 var SHEET_EVALUATOR_3 = "Evaluator 3";
 var SHEET_SUMMARY = "Consolidated_Summary";
 var SHEET_CHECKLIST_REPORT = "Checklist_Report";
+var SHEET_CHECKLIST_HORIZONTAL = "Checklist_Report_Horizontal";
 var SHEET_INDICATIVE_SOURCE = "indicative 1";
 
 // Column Definitions for Evaluations_Master (1-indexed for Apps Script range operations)
@@ -90,6 +91,7 @@ function createCustomMenu() {
   var ui = SpreadsheetApp.getUi();
   ui.createMenu("🏥 PPMP Evaluation")
     .addItem("🚀 Initialize Evaluation Workbook", "initializeEvaluationWorkbook")
+    .addItem("📊 Initialize / Refresh Horizontal Report", "createHorizontalReportSheet")
     .addItem("📑 Initialize / Reset Printable Checklist Viewer", "createChecklistReportSheet")
     .addItem("🔄 Sync Master Drug List", "syncMasterDrugList")
     .addItem("📊 Refresh Consolidated Summary", "refreshConsolidatedSummary")
@@ -408,6 +410,7 @@ function onEvaluationsEdit(e) {
   
   processMasterRow(sheet, row);
   refreshConsolidatedSummary();
+  syncHorizontalReport(true);
 }
 
 /**
@@ -844,3 +847,213 @@ function exportCurrentChecklistPdf() {
     ui.alert("Error Exporting PDF", err.toString(), ui.ButtonSet.OK);
   }
 }
+
+/**
+ * Creates or updates the clean, presentation-ready Horizontal Evaluation Summary Report
+ * (Checklist_Report_Horizontal). Mirrors Evaluations_Master horizontally but with official
+ * human-readable headers, clean checkmarks (✓ / ✗ / —), scores, and evaluator names.
+ */
+function createHorizontalReportSheet() {
+  syncHorizontalReport(false);
+}
+
+/**
+ * Creates or updates the clean, presentation-ready Horizontal Evaluation Summary Report
+ * (Checklist_Report_Horizontal). Mirrors Evaluations_Master horizontally but with official
+ * human-readable headers, clean checkmarks (✓ / ✗ / —), scores, and evaluator names.
+ */
+function syncHorizontalReport(silent) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(SHEET_CHECKLIST_HORIZONTAL);
+  
+  if (!sheet) {
+    if (silent) return;
+    sheet = getOrCreateSheet(ss, SHEET_CHECKLIST_HORIZONTAL);
+  }
+  
+  try {
+    sheet.clear();
+    sheet.clearFormats();
+    
+    // Build Evaluator Name lookup map from Evaluator_Accounts
+    var evalMap = {};
+    var acctsSheet = ss.getSheetByName("Evaluator_Accounts");
+    if (acctsSheet && acctsSheet.getLastRow() > 1) {
+      var acctsData = acctsSheet.getRange(2, 1, acctsSheet.getLastRow() - 1, 3).getValues();
+      acctsData.forEach(function(row) {
+        var role = row[1]; // Col B
+        var name = row[2]; // Col C
+        if (role && name) {
+          evalMap[role.toString().trim()] = name.toString().trim();
+        }
+      });
+    }
+    
+    // 1. Group Headers (Row 1)
+    sheet.getRange("A1:G1").merge().setValue("IDENTIFICATION & METADATA")
+      .setBackground("#1B365D").setFontColor("#FFFFFF").setFontWeight("bold").setHorizontalAlignment("center");
+      
+    sheet.getRange("H1:Z1").merge().setValue("PART I: LABELING & REGULATORY COMPLIANCE (19 CRITERIA)")
+      .setBackground("#2C3E50").setFontColor("#FFFFFF").setFontWeight("bold").setHorizontalAlignment("center");
+      
+    sheet.getRange("AA1:AF1").merge().setValue("PART II: PHYSICAL PACKAGING & CONTAINER INTEGRITY (6 CRITERIA)")
+      .setBackground("#34495E").setFontColor("#FFFFFF").setFontWeight("bold").setHorizontalAlignment("center");
+      
+    sheet.getRange("AG1:AJ1").merge().setValue("EVALUATION VERDICT & SCORES")
+      .setBackground("#004B49").setFontColor("#FFFFFF").setFontWeight("bold").setHorizontalAlignment("center");
+      
+    // 2. Official Column Headers (Row 2)
+    var row2Headers = [
+      "#", "Generic Name", "Brand Name", "Manufacturer", "Evaluator Role", "Evaluator Name", "Date",
+      // Part I items (19)
+      "1. Product Name", "2. Dosage Form & Strength", "3. Pharmacologic Category", "4. Formulation / Composition",
+      "5. Indication(s)", "6. Dosage & Mode of Admin", "7. Warnings & Precautions", "8. Drug Interactions",
+      "9. Adverse Drug Reactions", "10. Overdose Info", "11. Storage Conditions", "12. Net Content / Pack Size",
+      "13. Marketing Auth Holder", "14. Manufacturer Address", "15. Rx Caution Statement", "16. ADR Reporting",
+      "17. Registration Number", "18. Batch / Lot Number", "19. Mfg & Expiry Date",
+      // Part II items (6)
+      "1. Inner Label Match", "2. Container Label Legibility", "3. Blister Pack Print",
+      "4. Parenteral Leakage Check", "5. Rubber Stopper Puncture", "6. Dispensing Ease & Integrity",
+      // Verdict
+      "Part I Score", "Part II Score", "Recommendation", "Remarks"
+    ];
+    
+    var hRange = sheet.getRange(2, 1, 1, row2Headers.length);
+    hRange.setValues([row2Headers]);
+    hRange.setBackground("#F1F5F9").setFontWeight("bold").setHorizontalAlignment("center");
+    sheet.getRange("B2:D2").setHorizontalAlignment("left");
+    sheet.getRange("F2").setHorizontalAlignment("left");
+    sheet.getRange("AJ2").setHorizontalAlignment("left");
+    
+    // Set Column Widths
+    sheet.setColumnWidth(1, 40);   // #
+    sheet.setColumnWidth(2, 220);  // Generic Name
+    sheet.setColumnWidth(3, 140);  // Brand Name
+    sheet.setColumnWidth(4, 140);  // Manufacturer
+    sheet.setColumnWidth(5, 110);  // Evaluator Role
+    sheet.setColumnWidth(6, 170);  // Evaluator Name
+    sheet.setColumnWidth(7, 95);   // Date
+    for (var c = 8; c <= 32; c++) {
+      sheet.setColumnWidth(c, 75); // Part I & II criteria checkmark cols
+    }
+    sheet.setColumnWidth(33, 90);  // Part I Score
+    sheet.setColumnWidth(34, 90);  // Part II Score
+    sheet.setColumnWidth(35, 130); // Recommendation
+    sheet.setColumnWidth(36, 220); // Remarks
+    
+    // Freeze top 2 header rows and left 4 identifying columns
+    sheet.setFrozenRows(2);
+    sheet.setFrozenColumns(4);
+    
+    // 3. Read and populate data from Evaluations_Master
+    var masterSheet = ss.getSheetByName(SHEET_EVALUATIONS_MASTER);
+    if (!masterSheet || masterSheet.getLastRow() <= 1) {
+      if (!silent) {
+        SpreadsheetApp.getUi().alert("Horizontal Report Initialized", "The 'Checklist_Report_Horizontal' tab is ready!\n\nNo evaluation records found yet. Once evaluations are submitted, this sheet will populate automatically.", SpreadsheetApp.getUi().ButtonSet.OK);
+      }
+      return;
+    }
+    
+    var masterData = masterSheet.getRange(2, 1, masterSheet.getLastRow() - 1, EVAL_HEADERS.length).getValues();
+    var reportRows = [];
+    var recColors = [];
+    
+    for (var i = 0; i < masterData.length; i++) {
+      var mRow = masterData[i];
+      var evalId = mRow[0];
+      if (!evalId) continue;
+      
+      var rawTimestamp = mRow[1];
+      var dateStr = "";
+      if (rawTimestamp instanceof Date) {
+        dateStr = Utilities.formatDate(rawTimestamp, "GMT+8", "yyyy-MM-dd");
+      } else if (rawTimestamp) {
+        dateStr = rawTimestamp.toString().split(" ")[0];
+      }
+      
+      var role = mRow[2] ? mRow[2].toString().trim() : "";
+      var genericName = mRow[3] || "";
+      var brandName = mRow[4] || "";
+      var manufacturer = mRow[5] || "";
+      var evalName = evalMap[role] || role;
+      
+      // Transform Part I items (indices 6 to 24 -> 19 items)
+      var p1Transformed = [];
+      for (var p1 = 6; p1 <= 24; p1++) {
+        var val1 = mRow[p1] ? mRow[p1].toString().trim() : "";
+        p1Transformed.push(formatCheckmark(val1));
+      }
+      
+      // Transform Part II items (indices 25 to 30 -> 6 items)
+      var p2Transformed = [];
+      for (var p2 = 25; p2 <= 30; p2++) {
+        var val2 = mRow[p2] ? mRow[p2].toString().trim() : "";
+        p2Transformed.push(formatCheckmark(val2));
+      }
+      
+      var p1Score = mRow[41] !== undefined ? mRow[41] : "";
+      var p2Score = mRow[42] !== undefined ? mRow[42] : "";
+      var remarks = mRow[43] || "";
+      var recommendation = mRow[44] || "";
+      
+      var newRow = [
+        (reportRows.length + 1), genericName, brandName, manufacturer, role, evalName, dateStr
+      ].concat(p1Transformed).concat(p2Transformed).concat([p1Score, p2Score, recommendation, remarks]);
+      
+      reportRows.push(newRow);
+      
+      // Color badge for recommendation
+      if (recommendation === "Recommended") {
+        recColors.push("#D4EFDF"); // Light green
+      } else if (recommendation === "Not Recommended") {
+        recColors.push("#FADBD8"); // Light red
+      } else {
+        recColors.push("#FFFFFF");
+      }
+    }
+    
+    if (reportRows.length > 0) {
+      var dataRange = sheet.getRange(3, 1, reportRows.length, row2Headers.length);
+      dataRange.setValues(reportRows);
+      
+      // Apply zebra styling and centered alignment
+      for (var r = 0; r < reportRows.length; r++) {
+        var rowNum = 3 + r;
+        var rowBg = (r % 2 === 0) ? "#FFFFFF" : "#F8FAFC";
+        sheet.getRange(rowNum, 1, 1, row2Headers.length).setBackground(rowBg);
+        
+        // Highlight recommendation badge
+        sheet.getRange(rowNum, 35).setBackground(recColors[r]).setFontWeight("bold");
+      }
+      
+      // Center-align checklist checkmark columns (Col H to AF, which is 8 to 32)
+      sheet.getRange(3, 1, reportRows.length, 1).setHorizontalAlignment("center");
+      sheet.getRange(3, 5, reportRows.length, 1).setHorizontalAlignment("center");
+      sheet.getRange(3, 7, reportRows.length, 28).setHorizontalAlignment("center").setFontSize(10);
+      
+      // Apply clean subtle grid borders
+      dataRange.setBorder(true, true, true, true, true, true, "#CBD5E1", SpreadsheetApp.BorderStyle.SOLID);
+    }
+    
+    if (!silent) {
+      SpreadsheetApp.getUi().alert("Horizontal Report Generated", "The 'Checklist_Report_Horizontal' tab is updated with " + reportRows.length + " evaluation records!\n\nAll headers are human-readable, checkmarks are clean (✓ / ✗ / —), and evaluator names are populated.", SpreadsheetApp.getUi().ButtonSet.OK);
+    }
+  } catch (err) {
+    Logger.log("Error in syncHorizontalReport: " + err.toString());
+    if (!silent) {
+      SpreadsheetApp.getUi().alert("Error Creating Horizontal Report", err.toString(), SpreadsheetApp.getUi().ButtonSet.OK);
+    }
+  }
+}
+
+/**
+ * Helper to format raw Yes/No/N/A values into clean presentation symbols.
+ */
+function formatCheckmark(val) {
+  if (val === "Yes") return "✓";
+  if (val === "No") return "✗";
+  if (val === "N/A") return "—";
+  return val;
+}
+
+

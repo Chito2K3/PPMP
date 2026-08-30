@@ -287,3 +287,18 @@ Whenever evaluators submit assessments through AppSheet, you can instantly plot 
    * Press **`Ctrl + P`** to print directly or save as PDF.
    * Or click **`🏥 PPMP Evaluation`** → **`📄 Export Current Checklist to PDF`** to generate a direct PDF copy into your Google Drive.
 
+---
+
+## 10. 📊 Clean Horizontal Evaluation Report Tab (`Checklist_Report_Horizontal`)
+
+For committee presentations, audit logs, and spreadsheet reporting across all evaluations:
+
+1. Click **`🏥 PPMP Evaluation`** → **`📊 Initialize / Refresh Horizontal Report`**.
+2. A new tab named **`Checklist_Report_Horizontal`** is generated with:
+   * **Human-Readable Headers**: Grouped headers for *Identification & Metadata*, *Part I (19 Official Criteria)*, *Part II (6 Criteria)*, and *Verdict & Scores*.
+   * **Clean Checkmarks**: Transforms raw database strings into clean presentation symbols (`✓` for Yes, `✗` for No, `—` for N/A).
+   * **Evaluator Names**: Auto-populates full evaluator names from `Evaluator_Accounts`.
+   * **Color Badges**: Highlights Recommended (🟩) and Not Recommended (🟥) verdicts.
+   * **Frozen Panes**: Columns A–D and Rows 1–2 are frozen for smooth horizontal matrix scrolling.
+
+
