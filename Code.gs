@@ -875,11 +875,27 @@ function syncHorizontalReport(silent) {
     sheet.clear();
     sheet.clearFormats();
     
+    // Ensure sufficient rows and columns exist
+    if (sheet.getMaxColumns() < 40) {
+      sheet.insertColumnsAfter(sheet.getMaxColumns(), 40 - sheet.getMaxColumns());
+    }
+    if (sheet.getMaxRows() < 100) {
+      sheet.insertRowsAfter(sheet.getMaxRows(), 100 - sheet.getMaxRows());
+    }
+    
+    // Unhide any hidden rows/columns
+    sheet.showRows(1, sheet.getMaxRows());
+    sheet.showColumns(1, sheet.getMaxColumns());
+    
+    // Explicit row heights for headers
+    sheet.setRowHeight(1, 30);
+    sheet.setRowHeight(2, 36);
+    
     // Build Evaluator Name lookup map from Evaluator_Accounts
     var evalMap = {};
     var acctsSheet = ss.getSheetByName("Evaluator_Accounts");
     if (acctsSheet && acctsSheet.getLastRow() > 1) {
-      var acctsData = acctsSheet.getRange(2, 1, acctsSheet.getLastRow() - 1, 3).getValues();
+      var acctsData = acctsSheet.getRange(2, 1, acctsSheet.getLastRow() - 1, Math.min(acctsSheet.getLastColumn(), 5)).getValues();
       acctsData.forEach(function(row) {
         var role = row[1]; // Col B
         var name = row[2]; // Col C
@@ -891,16 +907,16 @@ function syncHorizontalReport(silent) {
     
     // 1. Group Headers (Row 1)
     sheet.getRange("A1:G1").merge().setValue("IDENTIFICATION & METADATA")
-      .setBackground("#1B365D").setFontColor("#FFFFFF").setFontWeight("bold").setHorizontalAlignment("center");
+      .setBackground("#1B365D").setFontColor("#FFFFFF").setFontWeight("bold").setHorizontalAlignment("center").setVerticalAlignment("middle");
       
     sheet.getRange("H1:Z1").merge().setValue("PART I: LABELING & REGULATORY COMPLIANCE (19 CRITERIA)")
-      .setBackground("#2C3E50").setFontColor("#FFFFFF").setFontWeight("bold").setHorizontalAlignment("center");
+      .setBackground("#2C3E50").setFontColor("#FFFFFF").setFontWeight("bold").setHorizontalAlignment("center").setVerticalAlignment("middle");
       
     sheet.getRange("AA1:AF1").merge().setValue("PART II: PHYSICAL PACKAGING & CONTAINER INTEGRITY (6 CRITERIA)")
-      .setBackground("#34495E").setFontColor("#FFFFFF").setFontWeight("bold").setHorizontalAlignment("center");
+      .setBackground("#34495E").setFontColor("#FFFFFF").setFontWeight("bold").setHorizontalAlignment("center").setVerticalAlignment("middle");
       
     sheet.getRange("AG1:AJ1").merge().setValue("EVALUATION VERDICT & SCORES")
-      .setBackground("#004B49").setFontColor("#FFFFFF").setFontWeight("bold").setHorizontalAlignment("center");
+      .setBackground("#004B49").setFontColor("#FFFFFF").setFontWeight("bold").setHorizontalAlignment("center").setVerticalAlignment("middle");
       
     // 2. Official Column Headers (Row 2)
     var row2Headers = [
@@ -920,32 +936,32 @@ function syncHorizontalReport(silent) {
     
     var hRange = sheet.getRange(2, 1, 1, row2Headers.length);
     hRange.setValues([row2Headers]);
-    hRange.setBackground("#F1F5F9").setFontWeight("bold").setHorizontalAlignment("center");
+    hRange.setBackground("#E2E8F0").setFontWeight("bold").setHorizontalAlignment("center").setVerticalAlignment("middle").setWrap(true);
     sheet.getRange("B2:D2").setHorizontalAlignment("left");
     sheet.getRange("F2").setHorizontalAlignment("left");
     sheet.getRange("AJ2").setHorizontalAlignment("left");
     
     // Set Column Widths
     sheet.setColumnWidth(1, 40);   // #
-    sheet.setColumnWidth(2, 220);  // Generic Name
+    sheet.setColumnWidth(2, 240);  // Generic Name
     sheet.setColumnWidth(3, 140);  // Brand Name
     sheet.setColumnWidth(4, 140);  // Manufacturer
     sheet.setColumnWidth(5, 110);  // Evaluator Role
     sheet.setColumnWidth(6, 170);  // Evaluator Name
     sheet.setColumnWidth(7, 95);   // Date
     for (var c = 8; c <= 32; c++) {
-      sheet.setColumnWidth(c, 75); // Part I & II criteria checkmark cols
+      sheet.setColumnWidth(c, 85); // Part I & II criteria checkmark cols
     }
-    sheet.setColumnWidth(33, 90);  // Part I Score
-    sheet.setColumnWidth(34, 90);  // Part II Score
-    sheet.setColumnWidth(35, 130); // Recommendation
+    sheet.setColumnWidth(33, 95);  // Part I Score
+    sheet.setColumnWidth(34, 95);  // Part II Score
+    sheet.setColumnWidth(35, 140); // Recommendation
     sheet.setColumnWidth(36, 220); // Remarks
     
     // Freeze top 2 header rows and left 4 identifying columns
     sheet.setFrozenRows(2);
     sheet.setFrozenColumns(4);
     
-    // 3. Read and populate data from Evaluations_Master
+    // 3. Read data from Evaluations_Master
     var masterSheet = ss.getSheetByName(SHEET_EVALUATIONS_MASTER);
     if (!masterSheet || masterSheet.getLastRow() <= 1) {
       if (!silent) {
@@ -954,14 +970,14 @@ function syncHorizontalReport(silent) {
       return;
     }
     
-    var masterData = masterSheet.getRange(2, 1, masterSheet.getLastRow() - 1, EVAL_HEADERS.length).getValues();
+    var allMasterData = masterSheet.getDataRange().getValues();
     var reportRows = [];
     var recColors = [];
     
-    for (var i = 0; i < masterData.length; i++) {
-      var mRow = masterData[i];
+    for (var i = 1; i < allMasterData.length; i++) {
+      var mRow = allMasterData[i];
       var evalId = mRow[0];
-      if (!evalId) continue;
+      if (!evalId || evalId.toString().trim() === "") continue;
       
       var rawTimestamp = mRow[1];
       var dateStr = "";
@@ -980,19 +996,20 @@ function syncHorizontalReport(silent) {
       // Transform Part I items (indices 6 to 24 -> 19 items)
       var p1Transformed = [];
       for (var p1 = 6; p1 <= 24; p1++) {
-        var val1 = mRow[p1] ? mRow[p1].toString().trim() : "";
+        var val1 = (mRow[p1] !== undefined && mRow[p1] !== null) ? mRow[p1].toString().trim() : "";
         p1Transformed.push(formatCheckmark(val1));
       }
       
       // Transform Part II items (indices 25 to 30 -> 6 items)
       var p2Transformed = [];
       for (var p2 = 25; p2 <= 30; p2++) {
-        var val2 = mRow[p2] ? mRow[p2].toString().trim() : "";
+        var val2 = (mRow[p2] !== undefined && mRow[p2] !== null) ? mRow[p2].toString().trim() : "";
         p2Transformed.push(formatCheckmark(val2));
       }
       
-      var p1Score = mRow[41] !== undefined ? mRow[41] : "";
-      var p2Score = mRow[42] !== undefined ? mRow[42] : "";
+      // Find Score and Recommendation columns dynamically or by fallback index
+      var p1Score = (mRow[41] !== undefined && mRow[41] !== null) ? mRow[41] : "";
+      var p2Score = (mRow[42] !== undefined && mRow[42] !== null) ? mRow[42] : "";
       var remarks = mRow[43] || "";
       var recommendation = mRow[44] || "";
       
@@ -1003,9 +1020,9 @@ function syncHorizontalReport(silent) {
       reportRows.push(newRow);
       
       // Color badge for recommendation
-      if (recommendation === "Recommended") {
+      if (recommendation.toString().indexOf("Recommended") !== -1 && recommendation.toString().indexOf("Not") === -1) {
         recColors.push("#D4EFDF"); // Light green
-      } else if (recommendation === "Not Recommended") {
+      } else if (recommendation.toString().indexOf("Not Recommended") !== -1) {
         recColors.push("#FADBD8"); // Light red
       } else {
         recColors.push("#FFFFFF");
@@ -1016,9 +1033,10 @@ function syncHorizontalReport(silent) {
       var dataRange = sheet.getRange(3, 1, reportRows.length, row2Headers.length);
       dataRange.setValues(reportRows);
       
-      // Apply zebra styling and centered alignment
+      // Apply row heights, zebra styling and alignment
       for (var r = 0; r < reportRows.length; r++) {
         var rowNum = 3 + r;
+        sheet.setRowHeight(rowNum, 26);
         var rowBg = (r % 2 === 0) ? "#FFFFFF" : "#F8FAFC";
         sheet.getRange(rowNum, 1, 1, row2Headers.length).setBackground(rowBg);
         
@@ -1026,12 +1044,13 @@ function syncHorizontalReport(silent) {
         sheet.getRange(rowNum, 35).setBackground(recColors[r]).setFontWeight("bold");
       }
       
-      // Center-align checklist checkmark columns (Col H to AF, which is 8 to 32)
+      // Alignment
       sheet.getRange(3, 1, reportRows.length, 1).setHorizontalAlignment("center");
       sheet.getRange(3, 5, reportRows.length, 1).setHorizontalAlignment("center");
-      sheet.getRange(3, 7, reportRows.length, 28).setHorizontalAlignment("center").setFontSize(10);
+      sheet.getRange(3, 7, reportRows.length, 28).setHorizontalAlignment("center").setFontSize(11);
+      sheet.getRange(3, 33, reportRows.length, 3).setHorizontalAlignment("center");
       
-      // Apply clean subtle grid borders
+      // Borders
       dataRange.setBorder(true, true, true, true, true, true, "#CBD5E1", SpreadsheetApp.BorderStyle.SOLID);
     }
     
