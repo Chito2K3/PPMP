@@ -868,7 +868,7 @@ function syncHorizontalReport(silent) {
   var ui = SpreadsheetApp.getUi();
   
   if (!masterSheet) {
-    if (!silent) ui.alert("Error", "Evaluations_Master sheet was not found.", ui.ButtonSet.OK);
+    if (!silent) ui.alert("Error", "Evaluations_Master sheet was not found in this spreadsheet.", ui.ButtonSet.OK);
     return;
   }
   
@@ -878,7 +878,7 @@ function syncHorizontalReport(silent) {
     sheet.clear();
     sheet.clearFormats();
     
-    // Ensure sufficient rows and columns exist
+    // Ensure sufficient rows and columns exist in target sheet
     if (sheet.getMaxColumns() < 40) {
       sheet.insertColumnsAfter(sheet.getMaxColumns(), 40 - sheet.getMaxColumns());
     }
@@ -890,13 +890,16 @@ function syncHorizontalReport(silent) {
     sheet.showRows(1, sheet.getMaxRows());
     sheet.showColumns(1, sheet.getMaxColumns());
     
-    // Explicit row heights for headers
+    // Set explicit row heights
     sheet.setRowHeight(1, 30);
     sheet.setRowHeight(2, 38);
     
-    // 1. Group Headers (Row 1)
-    sheet.getRange("A1:G1").merge().setValue("IDENTIFICATION & METADATA")
+    // 1. Group Headers (Row 1) - Aligned with frozen columns (Cols A-D = 1-4)
+    sheet.getRange("A1:D1").merge().setValue("PRODUCT IDENTIFICATION")
       .setBackground("#1B365D").setFontColor("#FFFFFF").setFontWeight("bold").setHorizontalAlignment("center").setVerticalAlignment("middle");
+      
+    sheet.getRange("E1:G1").merge().setValue("EVALUATOR METADATA")
+      .setBackground("#244872").setFontColor("#FFFFFF").setFontWeight("bold").setHorizontalAlignment("center").setVerticalAlignment("middle");
       
     sheet.getRange("H1:Z1").merge().setValue("PART I: LABELING & REGULATORY COMPLIANCE (19 CRITERIA)")
       .setBackground("#2C3E50").setFontColor("#FFFFFF").setFontWeight("bold").setHorizontalAlignment("center").setVerticalAlignment("middle");
@@ -946,7 +949,7 @@ function syncHorizontalReport(silent) {
     sheet.setColumnWidth(35, 140); // Recommendation
     sheet.setColumnWidth(36, 220); // Remarks
     
-    // Freeze top 2 header rows and left 4 columns
+    // Freeze top 2 header rows and left 4 identifying columns (matches A1:D1 boundary)
     sheet.setFrozenRows(2);
     sheet.setFrozenColumns(4);
     
@@ -954,38 +957,81 @@ function syncHorizontalReport(silent) {
     var evalMap = {};
     var acctsSheet = ss.getSheetByName("Evaluator_Accounts");
     if (acctsSheet && acctsSheet.getLastRow() > 1) {
-      var acctsData = acctsSheet.getRange(2, 1, acctsSheet.getLastRow() - 1, Math.min(acctsSheet.getLastColumn(), 5)).getValues();
-      acctsData.forEach(function(row) {
-        var role = row[1]; // Col B
-        var name = row[2]; // Col C
+      var acctsData = acctsSheet.getDataRange().getValues();
+      for (var a = 1; a < acctsData.length; a++) {
+        var role = acctsData[a][1]; // Col B
+        var name = acctsData[a][2]; // Col C
         if (role && name) {
           evalMap[role.toString().trim()] = name.toString().trim();
         }
-      });
+      }
     }
     
-    // 4. Read Data from Evaluations_Master
-    var masterLastRow = masterSheet.getLastRow();
-    var masterLastCol = masterSheet.getLastColumn();
-    
-    if (masterLastRow <= 1) {
+    // 4. Safely Read All Data from Evaluations_Master
+    var masterData = masterSheet.getDataRange().getValues();
+    if (masterData.length <= 1) {
       if (!silent) ui.alert("Horizontal Report Initialized", "Checklist_Report_Horizontal is ready. No data rows found in Evaluations_Master yet.", ui.ButtonSet.OK);
       return;
     }
     
-    var rawMasterData = masterSheet.getRange(2, 1, masterLastRow - 1, Math.max(masterLastCol, 45)).getValues();
+    // Helper to normalize any header string for flexible matching
+    function norm(str) {
+      return (str || "").toString().toLowerCase().replace(/[^a-z0-9]/g, "");
+    }
+    
+    // Map normalized column header names to their column index
+    var masterHeaders = masterData[0];
+    var colMap = {};
+    for (var h = 0; h < masterHeaders.length; h++) {
+      var nName = norm(masterHeaders[h]);
+      if (nName) colMap[nName] = h;
+    }
+    
+    // Flexible helper to get value from a row using multiple possible key names or prefixes
+    function getVal(rowObj, possibleKeys) {
+      if (!Array.isArray(possibleKeys)) possibleKeys = [possibleKeys];
+      for (var k = 0; k < possibleKeys.length; k++) {
+        var target = norm(possibleKeys[k]);
+        // Exact normalized match
+        if (colMap[target] !== undefined) {
+          var val = rowObj[colMap[target]];
+          if (val !== undefined && val !== null && val.toString().trim() !== "") return val;
+        }
+        // Prefix match
+        for (var existingKey in colMap) {
+          if (existingKey.indexOf(target) === 0 || target.indexOf(existingKey) === 0) {
+            var val2 = rowObj[colMap[existingKey]];
+            if (val2 !== undefined && val2 !== null && val2.toString().trim() !== "") return val2;
+          }
+        }
+      }
+      return "";
+    }
+    
     var reportRows = [];
     var recColors = [];
     
-    for (var i = 0; i < rawMasterData.length; i++) {
-      var row = rawMasterData[i];
-      var evalId = row[0];
-      var generic = row[3];
+    for (var i = 1; i < masterData.length; i++) {
+      var row = masterData[i];
       
-      // If row has an ID or Generic Name
-      if (!evalId && !generic) continue;
+      // Check if row is completely empty
+      var hasData = false;
+      for (var c = 0; c < row.length; c++) {
+        if (row[c] !== "" && row[c] !== null && row[c] !== undefined) {
+          hasData = true;
+          break;
+        }
+      }
+      if (!hasData) continue;
       
-      var rawTimestamp = row[1];
+      var evalId = getVal(row, ["Evaluation_ID", "Evaluation ID", "ID", "Eval_ID", "Key"]) || row[0] || ("EVAL-" + i);
+      var generic = getVal(row, ["Generic_Name", "Generic Name", "Generic", "Medicine", "Item_Description", "Drug_Name"]) || row[3] || row[1] || "";
+      var brand = (getVal(row, ["Brand_Name", "Brand Name", "Brand"]) || row[4] || "").toString().trim();
+      var manufacturer = (getVal(row, ["Manufacturer", "Supplier", "Manufacturer_Name"]) || row[5] || "").toString().trim();
+      var role = (getVal(row, ["Evaluator", "Evaluator_Role", "Role"]) || row[2] || "").toString().trim();
+      var evalName = evalMap[role] || getVal(row, ["Evaluator_Name", "Evaluator Name", "Name"]) || role;
+      
+      var rawTimestamp = getVal(row, ["Timestamp", "Date", "Evaluation_Date", "Time"]) || row[1];
       var dateStr = "";
       if (rawTimestamp instanceof Date) {
         dateStr = Utilities.formatDate(rawTimestamp, "GMT+8", "yyyy-MM-dd");
@@ -993,30 +1039,29 @@ function syncHorizontalReport(silent) {
         dateStr = rawTimestamp.toString().split(" ")[0];
       }
       
-      var role = row[2] ? row[2].toString().trim() : "";
-      var brand = row[4] ? row[4].toString().trim() : "";
-      var manufacturer = row[5] ? row[5].toString().trim() : "";
-      var evalName = evalMap[role] || role;
-      
-      // Part I items: indices 6 to 24 (19 items)
+      // Part I items (19 items from P1_01 to P1_19)
       var p1Cols = [];
-      for (var p1 = 6; p1 <= 24; p1++) {
-        var val1 = (row[p1] !== undefined && row[p1] !== null) ? row[p1].toString().trim() : "";
+      for (var p1 = 1; p1 <= 19; p1++) {
+        var numStr = (p1 < 10) ? ("0" + p1) : ("" + p1);
+        var val1 = getVal(row, ["P1_" + numStr, "P1" + numStr, "Part1_" + numStr, "Part_I_" + numStr]);
+        if (!val1 && row[5 + p1] !== undefined) val1 = row[5 + p1]; // Fallback by column offset
         p1Cols.push(formatCheckmark(val1));
       }
       
-      // Part II items: indices 25 to 30 (6 items)
+      // Part II items (6 items from P2_01 to P2_06)
       var p2Cols = [];
-      for (var p2 = 25; p2 <= 30; p2++) {
-        var val2 = (row[p2] !== undefined && row[p2] !== null) ? row[p2].toString().trim() : "";
+      for (var p2 = 1; p2 <= 6; p2++) {
+        var numStr2 = "0" + p2;
+        var val2 = getVal(row, ["P2_" + numStr2, "P2" + numStr2, "Part2_" + numStr2, "Part_II_" + numStr2]);
+        if (!val2 && row[24 + p2] !== undefined) val2 = row[24 + p2]; // Fallback by column offset
         p2Cols.push(formatCheckmark(val2));
       }
       
-      // Scores and Verdict (indices 41, 42, 43, 44)
-      var p1Score = (row[41] !== undefined && row[41] !== null) ? row[41].toString().trim() : "";
-      var p2Score = (row[42] !== undefined && row[42] !== null) ? row[42].toString().trim() : "";
-      var remarks = row[43] ? row[43].toString().trim() : "";
-      var rec = row[44] ? row[44].toString().trim() : "";
+      // Scores and Verdict
+      var p1Score = getVal(row, ["Part_I_Score", "Part I Score", "Part1_Score", "Part1Score", "Score_Part_I"]);
+      var p2Score = getVal(row, ["Part_II_Score", "Part II Score", "Part2_Score", "Part2Score", "Score_Part_II"]);
+      var remarks = getVal(row, ["Remarks", "Remark", "Comments", "Notes"]);
+      var rec = (getVal(row, ["Recommendation", "Verdict", "Decision", "Status"]) || "").toString().trim();
       
       var formattedRow = [
         (reportRows.length + 1), generic, brand, manufacturer, role, evalName, dateStr
@@ -1024,9 +1069,9 @@ function syncHorizontalReport(silent) {
       
       reportRows.push(formattedRow);
       
-      if (rec === "Recommended") {
+      if (rec.indexOf("Recommended") !== -1 && rec.indexOf("Not") === -1) {
         recColors.push("#D4EFDF");
-      } else if (rec === "Not Recommended") {
+      } else if (rec.indexOf("Not Recommended") !== -1) {
         recColors.push("#FADBD8");
       } else {
         recColors.push("#FFFFFF");
@@ -1035,6 +1080,10 @@ function syncHorizontalReport(silent) {
     
     // 5. Write Data to Sheet
     if (reportRows.length > 0) {
+      if (sheet.getMaxRows() < reportRows.length + 5) {
+        sheet.insertRowsAfter(sheet.getMaxRows(), reportRows.length + 10);
+      }
+      
       var targetRange = sheet.getRange(3, 1, reportRows.length, row2Headers.length);
       targetRange.setValues(reportRows);
       
@@ -1046,7 +1095,7 @@ function syncHorizontalReport(silent) {
         sheet.getRange(rowNum, 35).setBackground(recColors[r]).setFontWeight("bold");
       }
       
-      // Formatting & Alignments
+      // Alignments
       sheet.getRange(3, 1, reportRows.length, 1).setHorizontalAlignment("center");
       sheet.getRange(3, 5, reportRows.length, 1).setHorizontalAlignment("center");
       sheet.getRange(3, 7, reportRows.length, 28).setHorizontalAlignment("center").setFontSize(11);
@@ -1056,12 +1105,12 @@ function syncHorizontalReport(silent) {
     }
     
     if (!silent) {
-      ui.alert("Success", "Successfully loaded " + reportRows.length + " evaluation rows into Checklist_Report_Horizontal with clean headers and checkmarks!", ui.ButtonSet.OK);
+      ui.alert("Success", "Loaded " + reportRows.length + " evaluation rows into Checklist_Report_Horizontal!", ui.ButtonSet.OK);
     }
   } catch (err) {
     Logger.log("Error in syncHorizontalReport: " + err.toString());
     if (!silent) {
-      ui.alert("Error Creating Horizontal Report", err.toString(), ui.ButtonSet.OK);
+      ui.alert("Error Creating Horizontal Report", err.toString() + "\nLine: " + err.lineNumber, ui.ButtonSet.OK);
     }
   }
 }
