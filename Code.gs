@@ -883,27 +883,13 @@ function syncHorizontalReport(silent) {
       sheet.insertRowsAfter(sheet.getMaxRows(), 100 - sheet.getMaxRows());
     }
     
-    // Unhide any hidden rows/columns
+    // Unhide all rows/columns
     sheet.showRows(1, sheet.getMaxRows());
     sheet.showColumns(1, sheet.getMaxColumns());
     
-    // Explicit row heights for headers
+    // Explicit row heights
     sheet.setRowHeight(1, 30);
-    sheet.setRowHeight(2, 36);
-    
-    // Build Evaluator Name lookup map from Evaluator_Accounts
-    var evalMap = {};
-    var acctsSheet = ss.getSheetByName("Evaluator_Accounts");
-    if (acctsSheet && acctsSheet.getLastRow() > 1) {
-      var acctsData = acctsSheet.getRange(2, 1, acctsSheet.getLastRow() - 1, Math.min(acctsSheet.getLastColumn(), 5)).getValues();
-      acctsData.forEach(function(row) {
-        var role = row[1]; // Col B
-        var name = row[2]; // Col C
-        if (role && name) {
-          evalMap[role.toString().trim()] = name.toString().trim();
-        }
-      });
-    }
+    sheet.setRowHeight(2, 38);
     
     // 1. Group Headers (Row 1)
     sheet.getRange("A1:G1").merge().setValue("IDENTIFICATION & METADATA")
@@ -948,7 +934,7 @@ function syncHorizontalReport(silent) {
     sheet.setColumnWidth(4, 140);  // Manufacturer
     sheet.setColumnWidth(5, 110);  // Evaluator Role
     sheet.setColumnWidth(6, 170);  // Evaluator Name
-    sheet.setColumnWidth(7, 95);   // Date
+    sheet.setColumnWidth(7, 100);  // Date
     for (var c = 8; c <= 32; c++) {
       sheet.setColumnWidth(c, 85); // Part I & II criteria checkmark cols
     }
@@ -957,105 +943,103 @@ function syncHorizontalReport(silent) {
     sheet.setColumnWidth(35, 140); // Recommendation
     sheet.setColumnWidth(36, 220); // Remarks
     
-    // Freeze top 2 header rows and left 4 identifying columns
+    // Freeze top 2 header rows and left 4 columns
     sheet.setFrozenRows(2);
     sheet.setFrozenColumns(4);
     
-    // 3. Read data from Evaluations_Master
-    var masterSheet = ss.getSheetByName(SHEET_EVALUATIONS_MASTER);
-    if (!masterSheet || masterSheet.getLastRow() <= 1) {
-      if (!silent) {
-        SpreadsheetApp.getUi().alert("Horizontal Report Initialized", "The 'Checklist_Report_Horizontal' tab is ready!\n\nNo evaluation records found yet. Once evaluations are submitted, this sheet will populate automatically.", SpreadsheetApp.getUi().ButtonSet.OK);
-      }
-      return;
+    // 3. Inject 100% Live Dynamic Array Formulas in Row 3
+    // Col A (#): Row sequence
+    sheet.getRange("A3").setFormula('=IFERROR(MAP(Evaluations_Master!A2:A, LAMBDA(id, IF(id="", "", ROW(id)-1))), "")');
+    
+    // Col B (Generic Name):
+    sheet.getRange("B3").setFormula('=IFERROR(ARRAYFORMULA(IF(Evaluations_Master!A2:A="", "", Evaluations_Master!D2:D)), "")');
+    
+    // Col C (Brand Name):
+    sheet.getRange("C3").setFormula('=IFERROR(ARRAYFORMULA(IF(Evaluations_Master!A2:A="", "", Evaluations_Master!E2:E)), "")');
+    
+    // Col D (Manufacturer):
+    sheet.getRange("D3").setFormula('=IFERROR(ARRAYFORMULA(IF(Evaluations_Master!A2:A="", "", Evaluations_Master!F2:F)), "")');
+    
+    // Col E (Evaluator Role):
+    sheet.getRange("E3").setFormula('=IFERROR(ARRAYFORMULA(IF(Evaluations_Master!A2:A="", "", Evaluations_Master!C2:C)), "")');
+    
+    // Col F (Evaluator Name lookup from Evaluator_Accounts):
+    sheet.getRange("F3").setFormula('=IFERROR(ARRAYFORMULA(IF(Evaluations_Master!C2:C="", "", IFERROR(XLOOKUP(Evaluations_Master!C2:C, Evaluator_Accounts!B:B, Evaluator_Accounts!C:C, Evaluations_Master!C2:C), Evaluations_Master!C2:C))), "")');
+    
+    // Col G (Date):
+    sheet.getRange("G3").setFormula('=IFERROR(ARRAYFORMULA(IF(Evaluations_Master!A2:A="", "", IF(ISNUMBER(Evaluations_Master!B2:B), TEXT(Evaluations_Master!B2:B, "yyyy-mm-dd"), LEFT(TO_TEXT(Evaluations_Master!B2:B), 10)))), "")');
+    
+    // Col H to Z: 19 Part I criteria checkmark formulas (Cols G to Y in Evaluations_Master)
+    for (var p1 = 0; p1 < 19; p1++) {
+      var sourceCol = getColumnLetter(7 + p1); // Col G is 7
+      var targetCol = getColumnLetter(8 + p1); // Col H is 8
+      sheet.getRange(targetCol + "3").setFormula(
+        '=IFERROR(ARRAYFORMULA(IF(Evaluations_Master!A2:A="", "", IF(Evaluations_Master!' + sourceCol + '2:' + sourceCol + '="Yes", "✓", IF(Evaluations_Master!' + sourceCol + '2:' + sourceCol + '="No", "✗", IF(Evaluations_Master!' + sourceCol + '2:' + sourceCol + '="N/A", "—", ""))))), "")'
+      );
     }
     
-    var allMasterData = masterSheet.getDataRange().getValues();
-    var reportRows = [];
-    var recColors = [];
-    
-    for (var i = 1; i < allMasterData.length; i++) {
-      var mRow = allMasterData[i];
-      var evalId = mRow[0];
-      if (!evalId || evalId.toString().trim() === "") continue;
-      
-      var rawTimestamp = mRow[1];
-      var dateStr = "";
-      if (rawTimestamp instanceof Date) {
-        dateStr = Utilities.formatDate(rawTimestamp, "GMT+8", "yyyy-MM-dd");
-      } else if (rawTimestamp) {
-        dateStr = rawTimestamp.toString().split(" ")[0];
-      }
-      
-      var role = mRow[2] ? mRow[2].toString().trim() : "";
-      var genericName = mRow[3] || "";
-      var brandName = mRow[4] || "";
-      var manufacturer = mRow[5] || "";
-      var evalName = evalMap[role] || role;
-      
-      // Transform Part I items (indices 6 to 24 -> 19 items)
-      var p1Transformed = [];
-      for (var p1 = 6; p1 <= 24; p1++) {
-        var val1 = (mRow[p1] !== undefined && mRow[p1] !== null) ? mRow[p1].toString().trim() : "";
-        p1Transformed.push(formatCheckmark(val1));
-      }
-      
-      // Transform Part II items (indices 25 to 30 -> 6 items)
-      var p2Transformed = [];
-      for (var p2 = 25; p2 <= 30; p2++) {
-        var val2 = (mRow[p2] !== undefined && mRow[p2] !== null) ? mRow[p2].toString().trim() : "";
-        p2Transformed.push(formatCheckmark(val2));
-      }
-      
-      // Find Score and Recommendation columns dynamically or by fallback index
-      var p1Score = (mRow[41] !== undefined && mRow[41] !== null) ? mRow[41] : "";
-      var p2Score = (mRow[42] !== undefined && mRow[42] !== null) ? mRow[42] : "";
-      var remarks = mRow[43] || "";
-      var recommendation = mRow[44] || "";
-      
-      var newRow = [
-        (reportRows.length + 1), genericName, brandName, manufacturer, role, evalName, dateStr
-      ].concat(p1Transformed).concat(p2Transformed).concat([p1Score, p2Score, recommendation, remarks]);
-      
-      reportRows.push(newRow);
-      
-      // Color badge for recommendation
-      if (recommendation.toString().indexOf("Recommended") !== -1 && recommendation.toString().indexOf("Not") === -1) {
-        recColors.push("#D4EFDF"); // Light green
-      } else if (recommendation.toString().indexOf("Not Recommended") !== -1) {
-        recColors.push("#FADBD8"); // Light red
-      } else {
-        recColors.push("#FFFFFF");
-      }
+    // Col AA to AF: 6 Part II criteria checkmark formulas (Cols Z to AE in Evaluations_Master)
+    for (var p2 = 0; p2 < 6; p2++) {
+      var sourceCol2 = getColumnLetter(26 + p2); // Col Z is 26
+      var targetCol2 = getColumnLetter(27 + p2); // Col AA is 27
+      sheet.getRange(targetCol2 + "3").setFormula(
+        '=IFERROR(ARRAYFORMULA(IF(Evaluations_Master!A2:A="", "", IF(Evaluations_Master!' + sourceCol2 + '2:' + sourceCol2 + '="Yes", "✓", IF(Evaluations_Master!' + sourceCol2 + '2:' + sourceCol2 + '="No", "✗", IF(Evaluations_Master!' + sourceCol2 + '2:' + sourceCol2 + '="N/A", "—", ""))))), "")'
+      );
     }
     
-    if (reportRows.length > 0) {
-      var dataRange = sheet.getRange(3, 1, reportRows.length, row2Headers.length);
-      dataRange.setValues(reportRows);
+    // Col AG (Part I Score):
+    sheet.getRange("AG3").setFormula('=IFERROR(ARRAYFORMULA(IF(Evaluations_Master!A2:A="", "", Evaluations_Master!AP2:AP)), "")');
+    
+    // Col AH (Part II Score):
+    sheet.getRange("AH3").setFormula('=IFERROR(ARRAYFORMULA(IF(Evaluations_Master!A2:A="", "", Evaluations_Master!AQ2:AQ)), "")');
+    
+    // Col AI (Recommendation):
+    sheet.getRange("AI3").setFormula('=IFERROR(ARRAYFORMULA(IF(Evaluations_Master!A2:A="", "", Evaluations_Master!AS2:AS)), "")');
+    
+    // Col AJ (Remarks):
+    sheet.getRange("AJ3").setFormula('=IFERROR(ARRAYFORMULA(IF(Evaluations_Master!A2:A="", "", Evaluations_Master!AR2:AR)), "")');
+    
+    // Set Alignment
+    sheet.getRange("A3:A100").setHorizontalAlignment("center");
+    sheet.getRange("E3:E100").setHorizontalAlignment("center");
+    sheet.getRange("G3:AF100").setHorizontalAlignment("center").setFontSize(11);
+    sheet.getRange("AG3:AI100").setHorizontalAlignment("center").setFontWeight("bold");
+    
+    // Apply Conditional Formatting for Recommendation Badges
+    var recRuleGreen = SpreadsheetApp.newConditionalFormatRule()
+      .whenTextEqualTo("Recommended")
+      .setBackground("#D4EFDF")
+      .setFontColor("#196F3D")
+      .setBold(true)
+      .setRanges([sheet.getRange("AI3:AI100")])
+      .build();
       
-      // Apply row heights, zebra styling and alignment
-      for (var r = 0; r < reportRows.length; r++) {
-        var rowNum = 3 + r;
-        sheet.setRowHeight(rowNum, 26);
-        var rowBg = (r % 2 === 0) ? "#FFFFFF" : "#F8FAFC";
-        sheet.getRange(rowNum, 1, 1, row2Headers.length).setBackground(rowBg);
-        
-        // Highlight recommendation badge
-        sheet.getRange(rowNum, 35).setBackground(recColors[r]).setFontWeight("bold");
-      }
+    var recRuleRed = SpreadsheetApp.newConditionalFormatRule()
+      .whenTextEqualTo("Not Recommended")
+      .setBackground("#FADBD8")
+      .setFontColor("#922B21")
+      .setBold(true)
+      .setRanges([sheet.getRange("AI3:AI100")])
+      .build();
       
-      // Alignment
-      sheet.getRange(3, 1, reportRows.length, 1).setHorizontalAlignment("center");
-      sheet.getRange(3, 5, reportRows.length, 1).setHorizontalAlignment("center");
-      sheet.getRange(3, 7, reportRows.length, 28).setHorizontalAlignment("center").setFontSize(11);
-      sheet.getRange(3, 33, reportRows.length, 3).setHorizontalAlignment("center");
+    var checkRule = SpreadsheetApp.newConditionalFormatRule()
+      .whenTextEqualTo("✓")
+      .setFontColor("#1E8449")
+      .setBold(true)
+      .setRanges([sheet.getRange("H3:AF100")])
+      .build();
       
-      // Borders
-      dataRange.setBorder(true, true, true, true, true, true, "#CBD5E1", SpreadsheetApp.BorderStyle.SOLID);
-    }
+    var crossRule = SpreadsheetApp.newConditionalFormatRule()
+      .whenTextEqualTo("✗")
+      .setFontColor("#C0392B")
+      .setBold(true)
+      .setRanges([sheet.getRange("H3:AF100")])
+      .build();
+      
+    sheet.setConditionalFormatRules([recRuleGreen, recRuleRed, checkRule, crossRule]);
     
     if (!silent) {
-      SpreadsheetApp.getUi().alert("Horizontal Report Generated", "The 'Checklist_Report_Horizontal' tab is updated with " + reportRows.length + " evaluation records!\n\nAll headers are human-readable, checkmarks are clean (✓ / ✗ / —), and evaluator names are populated.", SpreadsheetApp.getUi().ButtonSet.OK);
+      SpreadsheetApp.getUi().alert("Horizontal Report Configured", "The 'Checklist_Report_Horizontal' tab is now connected with live dynamic array formulas!\n\nAll rows from Evaluations_Master are now displayed in real-time with human-readable headers and checkmarks.", SpreadsheetApp.getUi().ButtonSet.OK);
     }
   } catch (err) {
     Logger.log("Error in syncHorizontalReport: " + err.toString());
